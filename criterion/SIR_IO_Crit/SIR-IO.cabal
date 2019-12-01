@@ -58,14 +58,14 @@ executable SIR-IO
   
   -- Other library packages from which modules are imported.
   build-depends:        base
+                      , array
                       , bearriver
+                      , containers
                       , criterion
                       , deepseq
                       , dunai
                       , MonadRandom
-                      , containers
                       , mtl 
-                      , array
 
   -- Directories containing source files.
   hs-source-dirs:       .

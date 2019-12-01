@@ -4,7 +4,6 @@ module Main where
 
 import GHC.Generics (Generic)
 import Control.DeepSeq
-
 import Control.Concurrent.MVar
 import Data.IORef
 import Control.Concurrent
