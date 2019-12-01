@@ -4,9 +4,9 @@ module Main where
 
 import GHC.Generics (Generic)
 import Control.DeepSeq
-import Control.Concurrent.MVar
-import Data.IORef
 import Control.Concurrent
+import Control.Concurrent.STM
+--import Control.Concurrent.STM.Stats
 import Control.Monad.Random
 import Control.Monad.Reader
 import Control.Monad.Trans.MSF.Random
@@ -14,12 +14,12 @@ import Data.Array.IArray
 import FRP.BearRiver
 import qualified Criterion.Main as Crit
 
-data SIRState = Susceptible | Infected | Recovered 
+data SIRState = Susceptible | Infected | Recovered
   deriving (Show, Eq, Generic, NFData)
 
 type Disc2dCoord  = (Int, Int)
 type SIREnv       = Array Disc2dCoord SIRState
-type SIRMonad g   = RandT g IO
+type SIRMonad g   = RandT g STM
 type SIRAgent g   = SF (SIRMonad g) () ()
 
 contactRate :: Double
@@ -37,6 +37,9 @@ agentGridSize = (51, 51)
 rngSeed :: Int
 rngSeed = 42
 
+-- TO RUN: 
+-- clear & stack exec -- sir-stm --output sir-stm_51x51_8.html +RTS -N
+
 main :: IO ()
 main = do
   let dt      = 0.1
@@ -44,10 +47,11 @@ main = do
       g       = mkStdGen rngSeed
       (as, e) = initAgentsEnv agentGridSize
 
+  let name = show agentGridSize
+
   Crit.defaultMain [
-    Crit.bgroup "SIR IO"
-      [ Crit.bench "t = 100" $ Crit.nfIO (runSimulation g t dt e as)
-      ]
+    Crit.bgroup "sir-stm"
+      [ Crit.bench name $ Crit.nfIO (runSimulation g t dt e as) ]
     ]
 
 runSimulation :: RandomGen g
@@ -60,8 +64,7 @@ runSimulation :: RandomGen g
 runSimulation g0 t dt e as = do
     -- NOTE: initially I was thinking about using a TArray to reduce the transaction retries
     -- but using a single environment seems to fast enough for now
-    env <- newIORef e
-    envSync <- newMVar ()
+    env <- newTVarIO e
 
     let n         = length as
         (rngs, _) = rngSplits g0 n []
@@ -69,7 +72,7 @@ runSimulation g0 t dt e as = do
 
     vars <- zipWithM (\g' a -> do
       dtVar  <- newEmptyMVar 
-      retVar <- createAgentThread steps env envSync dtVar g' a
+      retVar <- createAgentThread steps env dtVar g' a
       return (dtVar, retVar)) rngs as
 
     let (dtVars, retVars) = unzip vars
@@ -83,31 +86,30 @@ runSimulation g0 t dt e as = do
       where
         (g', g'') = split g
 
-    simulationStep :: IORef SIREnv
+    simulationStep :: TVar SIREnv
                    -> [MVar DTime]
                    -> [MVar ()]
                    -> Int
                    -> IO SIREnv
     simulationStep env dtVars retVars _i = do
-      --putStrLn $ "Step " ++ show _i
+      -- putStrLn $ "Step " ++ show i
 
       -- tell all threads to continue with the corresponding DTime
       mapM_ (`putMVar` dt) dtVars
       -- wait for results
       mapM_ takeMVar retVars
       -- read last version of environment
-      readIORef env
+      readTVarIO env
 
 createAgentThread :: RandomGen g 
                   => Int 
-                  -> IORef SIREnv
-                  -> MVar ()
+                  -> TVar SIREnv
                   -> MVar DTime
                   -> g
                   -> (Disc2dCoord, SIRState)
                   -> IO (MVar ())
-createAgentThread steps env envSync dtVar rng0 a = do
-    let sf = uncurry (sirAgent env envSync) a
+createAgentThread steps env dtVar rng0 a = do
+    let sf = uncurry (sirAgent env) a
     -- create the var where the result will be posted to
     retVar <- newEmptyMVar
     _ <- forkIO $ agentThread steps sf rng0 retVar
@@ -128,7 +130,7 @@ createAgentThread steps env envSync dtVar rng0 a = do
       let sfReader = unMSF sf ()
           sfRand   = runReaderT sfReader dt
           sfSTM    = runRandT sfRand rng
-      ((_, sf'), rng') <- sfSTM
+      ((_, sf'), rng') <- atomically sfSTM -- atomically sfSTM -- trackSTM sfSTM
       -- NOTE: running STM with stats results in considerable lower performance the more STM actions are run concurrently
 
       -- post result to main thread
@@ -137,24 +139,22 @@ createAgentThread steps env envSync dtVar rng0 a = do
       agentThread (n - 1) sf' rng' retVar
 
 sirAgent :: RandomGen g 
-         => IORef SIREnv
-         -> MVar ()
+         => TVar SIREnv
          -> Disc2dCoord 
          -> SIRState 
          -> SIRAgent g
-sirAgent env envSync c Susceptible = susceptibleAgent env envSync c 
-sirAgent env envSync c Infected    = infectedAgent env envSync c 
-sirAgent _   _       _ Recovered   = recoveredAgent
+sirAgent env c Susceptible = susceptibleAgent env c 
+sirAgent env c Infected    = infectedAgent env c 
+sirAgent _   _ Recovered   = recoveredAgent
 
 susceptibleAgent :: RandomGen g 
-                 => IORef SIREnv 
-                 -> MVar ()
+                 => TVar SIREnv 
                  -> Disc2dCoord
                  -> SIRAgent g
-susceptibleAgent env envSync coord = 
+susceptibleAgent env coord = 
     switch 
       susceptible
-      (const $ infectedAgent env envSync coord)
+      (const $ infectedAgent env coord)
   where
     susceptible :: RandomGen g 
                 => SF (SIRMonad g) () ((), Event ())
@@ -164,8 +164,7 @@ susceptibleAgent env envSync coord =
       if not $ isEvent makeContact 
         then returnA -< ((), NoEvent)
         else (do
-          arrM_ (liftIO $ takeMVar envSync) -< ()
-          e <- arrM_ (liftIO $ readIORef env) -< ()
+          e <- arrM_ (lift $ lift $ readTVar env) -< ()
           let ns = neighbours e coord agentGridSize moore
           --let ns = allNeighbours e
           s <- drawRandomElemS       -< ns
@@ -175,22 +174,16 @@ susceptibleAgent env envSync coord =
               if infected 
                 then (do
                   let e' = changeCell coord Infected e
-                  arrM (liftIO . writeIORef env) -< e'
-                  arrM_ (liftIO $ putMVar envSync ()) -< ()
+                  arrM (lift . lift . writeTVar env) -< e'
                   returnA -< ((), Event ()))
-                else do
-                  arrM_ (liftIO $ putMVar envSync ()) -< ()
-                  returnA -< ((), NoEvent)
-            _       -> do
-              arrM_ (liftIO $ putMVar envSync ()) -< ()
-              returnA -< ((), NoEvent))
+                else returnA -< ((), NoEvent)
+            _       -> returnA -< ((), NoEvent))
 
 infectedAgent :: RandomGen g 
-              => IORef SIREnv 
-              -> MVar ()
+              => TVar SIREnv 
               -> Disc2dCoord
               -> SIRAgent g
-infectedAgent env envSync coord = 
+infectedAgent env coord = 
     switch
     infected 
       (const recoveredAgent)
@@ -200,9 +193,7 @@ infectedAgent env envSync coord =
       recovered <- occasionally illnessDuration () -< ()
       if isEvent recovered
         then (do
-          arrM_ (liftIO $ takeMVar envSync) -< ()
-          arrM_ (liftIO $ modifyIORef env (changeCell coord Recovered)) -< ()
-          arrM_ (liftIO $ putMVar envSync ()) -< ()
+          arrM_ (lift $ lift $ modifyTVar env (changeCell coord Recovered)) -< ()
           returnA -< ((), Event ()))
         else returnA -< ((), NoEvent)
 

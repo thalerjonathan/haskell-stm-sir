@@ -44,6 +44,9 @@ illnessDuration = 15.0
 agentGridSize :: (Int, Int)
 agentGridSize = (51, 51)
 
+-- TO RUN:
+-- clear & stack exec -- sir-seq --output sir-seq_51x51_8.html
+
 main :: IO ()
 main = do
   let dt      = 0.1
@@ -58,7 +61,7 @@ main = do
   let name = show agentGridSize
 
   Crit.defaultMain [
-    Crit.bgroup "SIR Seq"
+    Crit.bgroup "sir-seq"
       [ Crit.bench name $ Crit.nf (runSimulationUntil t dt) ctx
       ]
     ]
@@ -67,24 +70,23 @@ runSimulationUntil :: RandomGen g
                    => Time
                    -> DTime
                    -> SimCtx g
-                   -> [(Double, Double, Double)]
+                   -> [SIREnv]
 runSimulationUntil tMax dt ctx0 = runSimulationAux 0 ctx0 []
   where
     runSimulationAux :: RandomGen g
                       => Time
                       -> SimCtx g
-                      -> [(Double, Double, Double)]
-                      -> [(Double, Double, Double)]
+                      -> [SIREnv]
+                      -> [SIREnv]
     runSimulationAux t ctx acc 
         | t >= tMax = acc
         | otherwise = runSimulationAux t' ctx' acc'
       where
         env  = simEnv ctx
-        aggr = aggregateStates $ elems env
 
         t'   = t + dt
         ctx' = runStepCtx dt ctx
-        acc' = aggr : acc
+        acc' = env : acc
 
 mkSimCtx :: RandomGen g
          => SimSF g
