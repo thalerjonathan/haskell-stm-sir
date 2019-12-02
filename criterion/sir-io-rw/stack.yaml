@@ -15,7 +15,7 @@
 # resolver:
 #  name: custom-snapshot
 #  location: "./custom-snapshot.yaml"
-resolver: lts-12.4
+resolver: lts-12.4  #  12.4 (ghc-8.4.3) # 14.14 (ghc-8.6.5)
 
 # User packages to be built.
 # Various formats can be used as shown in the example below.
@@ -41,6 +41,8 @@ resolver: lts-12.4
 extra-deps:
 - dunai-0.4.0.0
 - bearriver-0.10.4.3
+#- dunai-0.5.2.1
+#- bearriver-0.10.4.6
 
 # Override default flag values for local packages and extra-deps
 # flags: {}

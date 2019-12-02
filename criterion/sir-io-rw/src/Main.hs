@@ -11,6 +11,7 @@ import Control.Concurrent
 import Control.Monad.Random
 import Control.Monad.Reader
 import Control.Monad.Trans.MSF.Random
+-- import Data.MonadicStreamFunction.InternalCore
 import Data.Array.IArray
 import FRP.BearRiver
 import qualified Criterion.Main as Crit
@@ -19,6 +20,7 @@ data SIRState = Susceptible | Infected | Recovered
   deriving (Show, Eq, Generic, NFData)
 
 type Disc2dCoord  = (Int, Int)
+type Dimension    = (Int, Int)
 type SIREnv       = Array Disc2dCoord SIRState
 type SIRMonad g   = RandT g IO
 type SIRAgent g   = SF (SIRMonad g) () ()
@@ -32,28 +34,30 @@ infectivity = 0.05
 illnessDuration :: Double
 illnessDuration = 15.0
 
-agentGridSize :: (Int, Int)
-agentGridSize = (51, 51)
-
 rngSeed :: Int
 rngSeed = 42
 
--- TO RUN: 
--- clear & stack exec -- sir-io-rw --output sir-io-rw_51x51_8.html +RTS -N
-
 main :: IO ()
 main = do
-  let dt      = 0.1
-      t       = 100
-      g       = mkStdGen rngSeed
-      (as, e) = initAgentsEnv agentGridSize
+    let dt = 0.1
+        t  = 1
+        g  = mkStdGen rngSeed
+        
+    Crit.defaultMain [
+        Crit.bgroup "sir-io-rw-cores"
+        [ Crit.bench "51x51"   $ Crit.nfIO (initSim g t dt ( 51,  51)) ]
+      , Crit.bgroup "sir-io-rw-agents"
+        [ Crit.bench "51x51"   $ Crit.nfIO (initSim g t dt ( 51,  51))
+        , Crit.bench "101x101" $ Crit.nfIO (initSim g t dt (101, 101))
+        , Crit.bench "151x151" $ Crit.nfIO (initSim g t dt (151, 151))
+        , Crit.bench "201x201" $ Crit.nfIO (initSim g t dt (201, 201))
+        , Crit.bench "251x251" $ Crit.nfIO (initSim g t dt (251, 251)) ]
+      ]
+  where
+    initSim g t dt d = do
+      let (as, e) = initAgentsEnv d
+      runSimulation g t dt e as d
 
-  let name = show agentGridSize
-
-  Crit.defaultMain [
-    Crit.bgroup "sir-io-rw"
-      [ Crit.bench name $ Crit.nfIO (runSimulation g t dt e as) ]
-    ]
 
 runSimulation :: RandomGen g
               => g 
@@ -61,8 +65,9 @@ runSimulation :: RandomGen g
               -> DTime 
               -> SIREnv
               -> [(Disc2dCoord, SIRState)] 
+              -> Dimension
               -> IO [SIREnv]
-runSimulation g0 t dt e as = do
+runSimulation g0 t dt e as d = do
     env <- newIORef e
     rwl <- RWL.new
 
@@ -72,7 +77,7 @@ runSimulation g0 t dt e as = do
 
     vars <- zipWithM (\g' a -> do
       dtVar  <- newEmptyMVar 
-      retVar <- createAgentThread steps env rwl dtVar g' a
+      retVar <- createAgentThread steps env rwl dtVar g' a d
       return (dtVar, retVar)) rngs as
 
     let (dtVars, retVars) = unzip vars
@@ -108,9 +113,10 @@ createAgentThread :: RandomGen g
                   -> MVar DTime
                   -> g
                   -> (Disc2dCoord, SIRState)
+                  -> Dimension
                   -> IO (MVar ())
-createAgentThread steps env rwl dtVar rng0 a = do
-    let sf = uncurry (sirAgent env rwl) a
+createAgentThread steps env rwl dtVar rng0 a d = do
+    let sf = uncurry (sirAgent env rwl d) a
     -- create the var where the result will be posted to
     retVar <- newEmptyMVar
     _ <- forkIO $ agentThread steps sf rng0 retVar
@@ -142,19 +148,21 @@ createAgentThread steps env rwl dtVar rng0 a = do
 sirAgent :: RandomGen g 
          => IORef SIREnv
          -> RWL.RWLock
+         -> Dimension
          -> Disc2dCoord 
          -> SIRState 
          -> SIRAgent g
-sirAgent env rwl c Susceptible = susceptibleAgent env rwl c 
-sirAgent env rwl c Infected    = infectedAgent env rwl c 
-sirAgent _   _   _ Recovered   = recoveredAgent
+sirAgent env rwl d c Susceptible = susceptibleAgent env rwl c d
+sirAgent env rwl _ c Infected    = infectedAgent env rwl c 
+sirAgent _   _   _ _ Recovered   = recoveredAgent
 
 susceptibleAgent :: RandomGen g 
                  => IORef SIREnv 
                  -> RWL.RWLock
                  -> Disc2dCoord
+                 -> Dimension
                  -> SIRAgent g
-susceptibleAgent env rwl coord = 
+susceptibleAgent env rwl coord d = 
     switch
       susceptible
       (const $ infectedAgent env rwl coord)
@@ -170,7 +178,7 @@ susceptibleAgent env rwl coord =
           arrM_ (liftIO $ RWL.acquireRead rwl) -< ()
           e <- arrM_ (liftIO $ readIORef env) -< ()
           arrM_ (liftIO $ RWL.releaseRead rwl) -< ()
-          let ns = neighbours e coord agentGridSize moore
+          let ns = neighbours e coord d moore
           --let ns = allNeighbours e
           s <- drawRandomElemS -< ns
           case s of
