@@ -18,6 +18,7 @@ data SIRState = Susceptible | Infected | Recovered
   deriving (Show, Eq, Generic, NFData)
 
 type Disc2dCoord  = (Int, Int)
+type Dimension    = (Int, Int)
 type SIREnv       = Array Disc2dCoord SIRState
 type SIRMonad g   = RandT g STM
 type SIRAgent g   = SF (SIRMonad g) () ()
@@ -31,28 +32,29 @@ infectivity = 0.05
 illnessDuration :: Double
 illnessDuration = 15.0
 
-agentGridSize :: (Int, Int)
-agentGridSize = (51, 51)
-
 rngSeed :: Int
 rngSeed = 42
 
--- TO RUN: 
--- clear & stack exec -- sir-stm --output sir-stm_51x51_8.html +RTS -N
-
 main :: IO ()
 main = do
-  let dt      = 0.1
-      t       = 100
-      g       = mkStdGen rngSeed
-      (as, e) = initAgentsEnv agentGridSize
-
-  let name = show agentGridSize
-
-  Crit.defaultMain [
-    Crit.bgroup "sir-stm"
-      [ Crit.bench name $ Crit.nfIO (runSimulation g t dt e as) ]
-    ]
+    let dt = 0.1
+        t  = 100
+        g  = mkStdGen rngSeed
+        
+    Crit.defaultMain [
+        Crit.bgroup "sir-stm-cores"
+        [ Crit.bench "51x51"   $ Crit.nfIO (initSim g t dt ( 51,  51)) ]
+      , Crit.bgroup "sir-stm-agents"
+        [ Crit.bench "51x51"   $ Crit.nfIO (initSim g t dt ( 51,  51))
+        , Crit.bench "101x101" $ Crit.nfIO (initSim g t dt (101, 101))
+        , Crit.bench "151x151" $ Crit.nfIO (initSim g t dt (151, 151))
+        , Crit.bench "201x201" $ Crit.nfIO (initSim g t dt (201, 201))
+        , Crit.bench "251x251" $ Crit.nfIO (initSim g t dt (251, 251)) ]
+      ]
+  where
+    initSim g t dt d = do
+      let (as, e) = initAgentsEnv d
+      runSimulation g t dt e as d
 
 runSimulation :: RandomGen g
               => g 
@@ -60,8 +62,9 @@ runSimulation :: RandomGen g
               -> DTime 
               -> SIREnv
               -> [(Disc2dCoord, SIRState)] 
+              -> Dimension
               -> IO [SIREnv]
-runSimulation g0 t dt e as = do
+runSimulation g0 t dt e as d = do
     -- NOTE: initially I was thinking about using a TArray to reduce the transaction retries
     -- but using a single environment seems to fast enough for now
     env <- newTVarIO e
@@ -72,7 +75,7 @@ runSimulation g0 t dt e as = do
 
     vars <- zipWithM (\g' a -> do
       dtVar  <- newEmptyMVar 
-      retVar <- createAgentThread steps env dtVar g' a
+      retVar <- createAgentThread steps env dtVar g' a d
       return (dtVar, retVar)) rngs as
 
     let (dtVars, retVars) = unzip vars
@@ -107,9 +110,10 @@ createAgentThread :: RandomGen g
                   -> MVar DTime
                   -> g
                   -> (Disc2dCoord, SIRState)
+                  -> Dimension
                   -> IO (MVar ())
-createAgentThread steps env dtVar rng0 a = do
-    let sf = uncurry (sirAgent env) a
+createAgentThread steps env dtVar rng0 a d = do
+    let sf = uncurry (sirAgent env d) a
     -- create the var where the result will be posted to
     retVar <- newEmptyMVar
     _ <- forkIO $ agentThread steps sf rng0 retVar
@@ -140,18 +144,20 @@ createAgentThread steps env dtVar rng0 a = do
 
 sirAgent :: RandomGen g 
          => TVar SIREnv
+         -> Dimension
          -> Disc2dCoord 
          -> SIRState 
          -> SIRAgent g
-sirAgent env c Susceptible = susceptibleAgent env c 
-sirAgent env c Infected    = infectedAgent env c 
-sirAgent _   _ Recovered   = recoveredAgent
+sirAgent env d c Susceptible = susceptibleAgent env c d
+sirAgent env _ c Infected    = infectedAgent env c 
+sirAgent _   _ _ Recovered   = recoveredAgent
 
 susceptibleAgent :: RandomGen g 
                  => TVar SIREnv 
                  -> Disc2dCoord
+                 -> Dimension
                  -> SIRAgent g
-susceptibleAgent env coord = 
+susceptibleAgent env coord d = 
     switch 
       susceptible
       (const $ infectedAgent env coord)
@@ -165,7 +171,7 @@ susceptibleAgent env coord =
         then returnA -< ((), NoEvent)
         else (do
           e <- arrM_ (lift $ lift $ readTVar env) -< ()
-          let ns = neighbours e coord agentGridSize moore
+          let ns = neighbours e coord d moore
           --let ns = allNeighbours e
           s <- drawRandomElemS       -< ns
           case s of

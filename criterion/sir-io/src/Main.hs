@@ -18,6 +18,7 @@ data SIRState = Susceptible | Infected | Recovered
   deriving (Show, Eq, Generic, NFData)
 
 type Disc2dCoord  = (Int, Int)
+type Dimension    = (Int, Int)
 type SIREnv       = Array Disc2dCoord SIRState
 type SIRMonad g   = RandT g IO
 type SIRAgent g   = SF (SIRMonad g) () ()
@@ -31,37 +32,39 @@ infectivity = 0.05
 illnessDuration :: Double
 illnessDuration = 15.0
 
-agentGridSize :: (Int, Int)
-agentGridSize = (51, 51)
-
 rngSeed :: Int
 rngSeed = 42
 
--- TO RUN: 
--- clear & stack exec -- sir-io --output sir-io_51x51_8.html +RTS -N
-
 main :: IO ()
 main = do
-  let dt      = 0.1
-      t       = 100
-      g       = mkStdGen rngSeed
-      (as, e) = initAgentsEnv agentGridSize
-
-  let name = show agentGridSize
-
-  Crit.defaultMain [
-    Crit.bgroup "sir-io"
-      [ Crit.bench name $ Crit.nfIO (runSimulation g t dt e as) ]
-    ]
+    let dt = 0.1
+        t  = 100
+        g  = mkStdGen rngSeed
+        
+    Crit.defaultMain [
+        Crit.bgroup "sir-io-cores"
+        [ Crit.bench "51x51"   $ Crit.nfIO (initSim g t dt ( 51,  51)) ]
+      , Crit.bgroup "sir-io-agents"
+        [ Crit.bench "51x51"   $ Crit.nfIO (initSim g t dt ( 51,  51))
+        , Crit.bench "101x101" $ Crit.nfIO (initSim g t dt (101, 101))
+        , Crit.bench "151x151" $ Crit.nfIO (initSim g t dt (151, 151))
+        , Crit.bench "201x201" $ Crit.nfIO (initSim g t dt (201, 201))
+        , Crit.bench "251x251" $ Crit.nfIO (initSim g t dt (251, 251)) ]
+      ]
+  where
+    initSim g t dt d = do
+      let (as, e) = initAgentsEnv d
+      runSimulation g t dt e as d
 
 runSimulation :: RandomGen g
               => g 
               -> Time 
               -> DTime 
               -> SIREnv
-              -> [(Disc2dCoord, SIRState)] 
+              -> [(Disc2dCoord, SIRState)]
+              -> Dimension
               -> IO [SIREnv]
-runSimulation g0 t dt e as = do
+runSimulation g0 t dt e as d = do
     -- NOTE: initially I was thinking about using a TArray to reduce the transaction retries
     -- but using a single environment seems to fast enough for now
     env <- newIORef e
@@ -73,7 +76,7 @@ runSimulation g0 t dt e as = do
 
     vars <- zipWithM (\g' a -> do
       dtVar  <- newEmptyMVar 
-      retVar <- createAgentThread steps env envSync dtVar g' a
+      retVar <- createAgentThread steps env envSync dtVar g' a d
       return (dtVar, retVar)) rngs as
 
     let (dtVars, retVars) = unzip vars
@@ -109,9 +112,10 @@ createAgentThread :: RandomGen g
                   -> MVar DTime
                   -> g
                   -> (Disc2dCoord, SIRState)
+                  -> Dimension
                   -> IO (MVar ())
-createAgentThread steps env envSync dtVar rng0 a = do
-    let sf = uncurry (sirAgent env envSync) a
+createAgentThread steps env envSync dtVar rng0 a d = do
+    let sf = uncurry (sirAgent env envSync d) a
     -- create the var where the result will be posted to
     retVar <- newEmptyMVar
     _ <- forkIO $ agentThread steps sf rng0 retVar
@@ -143,19 +147,21 @@ createAgentThread steps env envSync dtVar rng0 a = do
 sirAgent :: RandomGen g 
          => IORef SIREnv
          -> MVar ()
+         -> Dimension
          -> Disc2dCoord 
          -> SIRState 
          -> SIRAgent g
-sirAgent env envSync c Susceptible = susceptibleAgent env envSync c 
-sirAgent env envSync c Infected    = infectedAgent env envSync c 
-sirAgent _   _       _ Recovered   = recoveredAgent
+sirAgent env envSync d c Susceptible = susceptibleAgent env envSync c d
+sirAgent env envSync _ c Infected    = infectedAgent env envSync c 
+sirAgent _   _       _ _ Recovered   = recoveredAgent
 
 susceptibleAgent :: RandomGen g 
                  => IORef SIREnv 
                  -> MVar ()
                  -> Disc2dCoord
+                 -> Dimension
                  -> SIRAgent g
-susceptibleAgent env envSync coord = 
+susceptibleAgent env envSync coord d = 
     switch 
       susceptible
       (const $ infectedAgent env envSync coord)
@@ -170,24 +176,22 @@ susceptibleAgent env envSync coord =
         else (do
           arrM_ (liftIO $ takeMVar envSync) -< ()
           e <- arrM_ (liftIO $ readIORef env) -< ()
-          let ns = neighbours e coord agentGridSize moore
+          arrM_ (liftIO $ putMVar envSync ()) -< ()
+          let ns = neighbours e coord d moore
           --let ns = allNeighbours e
-          s <- drawRandomElemS       -< ns
+          s <- drawRandomElemS -< ns
           case s of
             Infected -> do
               infected <- arrM_ (lift $ randomBool infectivity) -< ()
               if infected 
                 then (do
                   let e' = changeCell coord Infected e
+                  arrM_ (liftIO $ takeMVar envSync) -< ()
                   arrM (liftIO . writeIORef env) -< e'
                   arrM_ (liftIO $ putMVar envSync ()) -< ()
                   returnA -< ((), Event ()))
-                else do
-                  arrM_ (liftIO $ putMVar envSync ()) -< ()
-                  returnA -< ((), NoEvent)
-            _       -> do
-              arrM_ (liftIO $ putMVar envSync ()) -< ()
-              returnA -< ((), NoEvent))
+                else returnA -< ((), NoEvent)
+            _ -> returnA -< ((), NoEvent))
 
 infectedAgent :: RandomGen g 
               => IORef SIREnv 

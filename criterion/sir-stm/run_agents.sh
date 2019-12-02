@@ -1,0 +1,1 @@
+stack exec -- sir-stm sir-stm-agents -o sir-stm_agents_4.html +RTS -N4

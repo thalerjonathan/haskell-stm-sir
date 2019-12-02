@@ -1,0 +1,1 @@
+stack exec -- sir-io sir-io-agents -o sir-io_agents_4.html +RTS -N4
