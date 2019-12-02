@@ -48,7 +48,7 @@ rngSeed = 123 -- 123 -- 42 leads to recovery without any infection
 main :: IO ()
 main = do
     let dt = 0.1
-        t  = 1
+        t  = 100
         g  = mkStdGen rngSeed
         
     Crit.defaultMain [
