@@ -17,6 +17,7 @@ data SIRState = Susceptible | Infected | Recovered
   deriving (Show, Eq, Generic, NFData)
 
 type Disc2dCoord  = (Int, Int)
+type Dimension    = (Int, Int)
 type SIREnv       = Array Disc2dCoord SIRState
 
 type SIRMonad g   = Rand g
@@ -41,30 +42,32 @@ infectivity = 0.05
 illnessDuration :: Double
 illnessDuration = 15.0
 
-agentGridSize :: (Int, Int)
-agentGridSize = (51, 51)
-
--- TO RUN:
--- clear & stack exec -- sir-seq --output sir-seq_51x51_8.html
+rngSeed :: Int
+rngSeed = 123 -- 123 -- 42 leads to recovery without any infection
 
 main :: IO ()
 main = do
-  let dt      = 0.1
-      t       = 100
-      seed    = 123 -- 123 -- 42 leads to recovery without any infection
-      g       = mkStdGen seed
-      (as, e) = initAgentsEnv agentGridSize
-      sfs     = map (\(coord, a) -> (sirAgent coord a, coord)) as
-      sf      = simulationStep sfs e
-      ctx     = mkSimCtx sf e g 0 0
-
-  let name = show agentGridSize
-
-  Crit.defaultMain [
-    Crit.bgroup "sir-seq"
-      [ Crit.bench name $ Crit.nf (runSimulationUntil t dt) ctx
+    let dt = 0.1
+        t  = 1
+        g  = mkStdGen rngSeed
+        
+    Crit.defaultMain [
+        Crit.bgroup "sir-seq-cores"
+        [ Crit.bench "51x51"   $ Crit.nf (initSim g t dt) ( 51,  51) ]
+      , Crit.bgroup "sir-seq-agents"
+        [ Crit.bench "51x51"   $ Crit.nf (initSim g t dt) ( 51,  51)
+        , Crit.bench "101x101" $ Crit.nf (initSim g t dt) (101, 101)
+        , Crit.bench "151x151" $ Crit.nf (initSim g t dt) (151, 151)
+        , Crit.bench "201x201" $ Crit.nf (initSim g t dt) (201, 201)
+        , Crit.bench "251x251" $ Crit.nf (initSim g t dt) (251, 251) ]
       ]
-    ]
+  where
+    initSim g t dt d = runSimulationUntil t dt ctx
+      where
+        (as, e) = initAgentsEnv d
+        sfs     = map (\(coord, a) -> (sirAgent coord d a, coord)) as
+        sf      = simulationStep sfs e
+        ctx     = mkSimCtx sf e g 0 0
 
 runSimulationUntil :: RandomGen g
                    => Time
@@ -158,13 +161,13 @@ simulationStep sfsCoords env = MSF $ \_ -> do
     updateCell :: Disc2dCoord -> SIRState -> SIREnv -> SIREnv
     updateCell c s e = e // [(c, s)]
 
-sirAgent :: RandomGen g => Disc2dCoord -> SIRState -> SIRAgent g
-sirAgent coord Susceptible = susceptibleAgent coord
-sirAgent _     Infected    = infectedAgent
-sirAgent _     Recovered   = recoveredAgent
+sirAgent :: RandomGen g => Disc2dCoord -> Dimension -> SIRState -> SIRAgent g
+sirAgent c d Susceptible = susceptibleAgent c d
+sirAgent _ _ Infected    = infectedAgent
+sirAgent _ _ Recovered   = recoveredAgent
 
-susceptibleAgent :: RandomGen g => Disc2dCoord -> SIRAgent g
-susceptibleAgent coord
+susceptibleAgent :: RandomGen g => Disc2dCoord -> Dimension -> SIRAgent g
+susceptibleAgent coord d
     = switch 
       -- delay the switching by 1 step, otherwise could
       -- make the transition from Susceptible to Recovered within time-step
@@ -179,7 +182,7 @@ susceptibleAgent coord
       if not $ isEvent makeContact 
         then returnA -< (Susceptible, NoEvent)
         else (do
-          let ns = neighbours env coord agentGridSize moore
+          let ns = neighbours env coord d moore
           --let ns = allNeighbours e
           s <- drawRandomElemS -< ns
           case s of

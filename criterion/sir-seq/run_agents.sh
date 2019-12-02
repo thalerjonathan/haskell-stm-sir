@@ -1,0 +1,1 @@
+stack exec -- sir-seq sir-seq-agents -o sir-seq_agents.html

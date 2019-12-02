@@ -1,0 +1,1 @@
+stack exec -- sir-seq sir-seq-cores -o sir-seq_51x51.html
