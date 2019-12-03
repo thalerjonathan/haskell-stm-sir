@@ -1,5 +1,4 @@
 cd sir-io/
-stack build
 sh run.sh
 cd ..
 
@@ -15,6 +14,6 @@ cd sir-stm/
 sh run.sh
 cd ..
 
-cd sir-seq/
+cd sir-tvar/
 sh run.sh
 cd ..

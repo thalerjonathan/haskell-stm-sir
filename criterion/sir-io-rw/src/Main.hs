@@ -42,16 +42,18 @@ main = do
     let dt = 0.1
         t  = 100
         g  = mkStdGen rngSeed
-        
+    
+    cores <- getNumCapabilities
+
     Crit.defaultMain [
         Crit.bgroup "sir-io-rw-cores"
-        [ Crit.bench "51x51"   $ Crit.nfIO (initSim g t dt ( 51,  51)) ]
+        [ Crit.bench ("51x51:"   ++ show cores) $ Crit.nfIO (initSim g t dt ( 51,  51)) ]
       , Crit.bgroup "sir-io-rw-agents"
-        [ Crit.bench "51x51"   $ Crit.nfIO (initSim g t dt ( 51,  51))
-        , Crit.bench "101x101" $ Crit.nfIO (initSim g t dt (101, 101))
-        , Crit.bench "151x151" $ Crit.nfIO (initSim g t dt (151, 151))
-        , Crit.bench "201x201" $ Crit.nfIO (initSim g t dt (201, 201))
-        , Crit.bench "251x251" $ Crit.nfIO (initSim g t dt (251, 251)) ]
+        [ Crit.bench ("51x51:"   ++ show cores) $ Crit.nfIO (initSim g t dt ( 51,  51))
+        , Crit.bench ("101x101:" ++ show cores) $ Crit.nfIO (initSim g t dt (101, 101))
+        , Crit.bench ("151x151:" ++ show cores) $ Crit.nfIO (initSim g t dt (151, 151))
+        , Crit.bench ("201x201:" ++ show cores) $ Crit.nfIO (initSim g t dt (201, 201))
+        , Crit.bench ("251x251:" ++ show cores) $ Crit.nfIO (initSim g t dt (251, 251)) ]
       ]
   where
     initSim g t dt d = do

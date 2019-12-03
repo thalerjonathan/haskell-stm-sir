@@ -52,7 +52,7 @@ main = do
         g  = mkStdGen rngSeed
         
     Crit.defaultMain [
-        Crit.bgroup "sir-seq-cores"
+        Crit.bgroup "sir-seq-singlecore"
         [ Crit.bench "51x51"   $ Crit.nf (initSim g t dt) ( 51,  51) ]
       , Crit.bgroup "sir-seq-agents"
         [ Crit.bench "51x51"   $ Crit.nf (initSim g t dt) ( 51,  51)
