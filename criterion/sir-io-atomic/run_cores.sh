@@ -6,4 +6,10 @@ stack exec -- sir-io-atomic sir-io-atomic-cores -o sir-io-atomic_51x51_3.html +R
 
 stack exec -- sir-io-atomic sir-io-atomic-cores -o sir-io-atomic_51x51_4.html +RTS -N4
 
+stack exec -- sir-io-atomic sir-io-atomic-cores -o sir-io-atomic_51x51_5.html +RTS -N5
+
+stack exec -- sir-io-atomic sir-io-atomic-cores -o sir-io-atomic_51x51_6.html +RTS -N6
+
+stack exec -- sir-io-atomic sir-io-atomic-cores -o sir-io-atomic_51x51_7.html +RTS -N7
+
 stack exec -- sir-io-atomic sir-io-atomic-cores -o sir-io-atomic_51x51_8.html +RTS -N8
