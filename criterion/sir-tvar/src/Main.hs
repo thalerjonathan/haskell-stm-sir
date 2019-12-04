@@ -47,8 +47,7 @@ main = do
         Crit.bgroup ("sir-tvar-cores:" ++ show cores)
         [ Crit.bench "51x51"   $ Crit.nfIO (initSim g t dt ( 51,  51)) ]
       , Crit.bgroup ("sir-tvar-agents:" ++ show cores)
-        [ Crit.bench "51x51"   $ Crit.nfIO (initSim g t dt ( 51,  51))
-        , Crit.bench "101x101" $ Crit.nfIO (initSim g t dt (101, 101))
+        [ Crit.bench "101x101" $ Crit.nfIO (initSim g t dt (101, 101))
         , Crit.bench "151x151" $ Crit.nfIO (initSim g t dt (151, 151))
         , Crit.bench "201x201" $ Crit.nfIO (initSim g t dt (201, 201))
         , Crit.bench "251x251" $ Crit.nfIO (initSim g t dt (251, 251)) ]
