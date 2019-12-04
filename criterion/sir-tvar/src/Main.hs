@@ -6,7 +6,7 @@ import GHC.Generics (Generic)
 import Control.DeepSeq
 import Control.Concurrent
 import Control.Concurrent.STM
---import Control.Concurrent.STM.Stats
+-- import Control.Concurrent.STM.Stats
 import Control.Monad.Random
 import Control.Monad.Reader
 import Control.Monad.Trans.MSF.Random
@@ -44,14 +44,14 @@ main = do
     cores <- getNumCapabilities
 
     Crit.defaultMain [
-        Crit.bgroup "sir-tvar-cores"
-        [ Crit.bench ("51x51:"   ++ show cores) $ Crit.nfIO (initSim g t dt ( 51,  51)) ]
-      , Crit.bgroup "sir-tvar-agents"
-        [ Crit.bench ("51x51:"   ++ show cores) $ Crit.nfIO (initSim g t dt ( 51,  51))
-        , Crit.bench ("101x101:" ++ show cores) $ Crit.nfIO (initSim g t dt (101, 101))
-        , Crit.bench ("151x151:" ++ show cores) $ Crit.nfIO (initSim g t dt (151, 151))
-        , Crit.bench ("201x201:" ++ show cores) $ Crit.nfIO (initSim g t dt (201, 201))
-        , Crit.bench ("251x251:" ++ show cores) $ Crit.nfIO (initSim g t dt (251, 251)) ]
+        Crit.bgroup ("sir-tvar-cores:" ++ show cores)
+        [ Crit.bench "51x51"   $ Crit.nfIO (initSim g t dt ( 51,  51)) ]
+      , Crit.bgroup ("sir-tvar-agents:" ++ show cores)
+        [ Crit.bench "51x51"   $ Crit.nfIO (initSim g t dt ( 51,  51))
+        , Crit.bench "101x101" $ Crit.nfIO (initSim g t dt (101, 101))
+        , Crit.bench "151x151" $ Crit.nfIO (initSim g t dt (151, 151))
+        , Crit.bench "201x201" $ Crit.nfIO (initSim g t dt (201, 201))
+        , Crit.bench "251x251" $ Crit.nfIO (initSim g t dt (251, 251)) ]
       ]
   where
     initSim g t dt d = do
@@ -83,6 +83,11 @@ runSimulation g0 t dt e as d = do
     let (dtVars, retVars) = unzip vars
 
     forM [0..steps-1] (simulationStep env dtVars retVars)
+
+    -- uncomment for STM stats
+    --ret <- forM [0..steps-1] (simulationStep env dtVars retVars)
+    --dumpSTMStats
+    --return ret
 
   where
     rngSplits :: RandomGen g => g -> Int -> [g] -> ([g], g)
@@ -121,6 +126,11 @@ createAgentThread steps env dtVar rng0 a d = do
     _ <- forkIO $ agentThread steps sf rng0 retVar
     return retVar
   where
+    -- uncomment for STM stats
+    -- stmConf = defaultTrackSTMConf {
+    --   globalTheshold = Nothing -- disable warnings, not useful for us
+    -- }
+
     agentThread :: RandomGen g 
                 => Int
                 -> SIRAgent g
@@ -136,7 +146,7 @@ createAgentThread steps env dtVar rng0 a d = do
       let sfReader = unMSF sf ()
           sfRand   = runReaderT sfReader dt
           sfSTM    = runRandT sfRand rng
-      ((_, sf'), rng') <- atomically sfSTM -- atomically sfSTM -- trackSTM sfSTM
+      ((_, sf'), rng') <- atomically sfSTM -- trackSTMConf stmConf "SIR Agent" sfSTM -- atomically sfSTM -- trackSTM sfSTM
       -- NOTE: running STM with stats results in considerable lower performance the more STM actions are run concurrently
 
       -- post result to main thread
