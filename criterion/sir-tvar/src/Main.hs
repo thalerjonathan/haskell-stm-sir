@@ -44,9 +44,9 @@ main = do
     cores <- getNumCapabilities
 
     Crit.defaultMain [
-        Crit.bgroup "sir-var-cores"
+        Crit.bgroup "sir-tvar-cores"
         [ Crit.bench ("51x51:"   ++ show cores) $ Crit.nfIO (initSim g t dt ( 51,  51)) ]
-      , Crit.bgroup "sir-var-agents"
+      , Crit.bgroup "sir-tvar-agents"
         [ Crit.bench ("51x51:"   ++ show cores) $ Crit.nfIO (initSim g t dt ( 51,  51))
         , Crit.bench ("101x101:" ++ show cores) $ Crit.nfIO (initSim g t dt (101, 101))
         , Crit.bench ("151x151:" ++ show cores) $ Crit.nfIO (initSim g t dt (151, 151))

@@ -44,14 +44,14 @@ main = do
     cores <- getNumCapabilities
 
     Crit.defaultMain [
-        Crit.bgroup "sir-io-cores"
-        [ Crit.bench ("51x51:"  ++ show cores) $ Crit.nfIO (initSim g t dt ( 51,  51)) ]
-      , Crit.bgroup "sir-io-agents"
-        [ Crit.bench ("51x51:"   ++ show cores) $ Crit.nfIO (initSim g t dt ( 51,  51))
-        , Crit.bench ("101x101:" ++ show cores) $ Crit.nfIO (initSim g t dt (101, 101))
-        , Crit.bench ("151x151:" ++ show cores) $ Crit.nfIO (initSim g t dt (151, 151))
-        , Crit.bench ("201x201:" ++ show cores) $ Crit.nfIO (initSim g t dt (201, 201))
-        , Crit.bench ("251x251:" ++ show cores) $ Crit.nfIO (initSim g t dt (251, 251)) ]
+        Crit.bgroup ("sir-io-cores:" ++ show cores)
+        [ Crit.bench "51x51" $ Crit.nfIO (initSim g t dt ( 51,  51)) ]
+      , Crit.bgroup ("sir-io-agents:" ++ show cores)
+        [ Crit.bench "51x51"   $ Crit.nfIO (initSim g t dt ( 51,  51))
+        , Crit.bench "101x101" $ Crit.nfIO (initSim g t dt (101, 101))
+        , Crit.bench "151x151" $ Crit.nfIO (initSim g t dt (151, 151))
+        , Crit.bench "201x201" $ Crit.nfIO (initSim g t dt (201, 201))
+        , Crit.bench "251x251" $ Crit.nfIO (initSim g t dt (251, 251)) ]
       ]
   where
     initSim g t dt d = do
@@ -176,10 +176,14 @@ susceptibleAgent env envSync coord d =
       if not $ isEvent makeContact 
         then returnA -< ((), NoEvent)
         else (do
+          -- read environment, need synced access
+          -- lock
           arrM_ (liftIO $ takeMVar envSync) -< ()
-          e <- arrM_ (liftIO $ readIORef env) -< ()
+          -- read (immutable) shared environment data
+          eReadOnly <- arrM_ (liftIO $ readIORef env) -< ()
+          -- unlock
           arrM_ (liftIO $ putMVar envSync ()) -< ()
-          let ns = neighbours e coord d moore
+          let ns = neighbours eReadOnly coord d moore
           --let ns = allNeighbours e
           s <- drawRandomElemS -< ns
           case s of
@@ -187,9 +191,18 @@ susceptibleAgent env envSync coord d =
               infected <- arrM_ (lift $ randomBool infectivity) -< ()
               if infected 
                 then (do
-                  let e' = changeCell coord Infected e
+                  -- we are modifying the environment, but need to read again
+                  -- because could have changed in the meantime by other agents
+                  -- therefore aquire lock, and read again. 
+                  -- aquire lock
                   arrM_ (liftIO $ takeMVar envSync) -< ()
+                  -- read (again) shared environment data
+                  e <- arrM_ (liftIO $ readIORef env) -< ()
+                  -- update environment data
+                  let e' = changeCell coord Infected e
+                  -- write to shared environment 
                   arrM (liftIO . writeIORef env) -< e'
+                  -- release lock
                   arrM_ (liftIO $ putMVar envSync ()) -< ()
                   returnA -< ((), Event ()))
                 else returnA -< ((), NoEvent)
@@ -210,8 +223,12 @@ infectedAgent env envSync coord =
       recovered <- occasionally illnessDuration () -< ()
       if isEvent recovered
         then (do
+          -- we are updating unconditionally, therefore trivial 
+          -- aquire lock
           arrM_ (liftIO $ takeMVar envSync) -< ()
+          -- modify shared environment
           arrM_ (liftIO $ modifyIORef env (changeCell coord Recovered)) -< ()
+          -- release lock
           arrM_ (liftIO $ putMVar envSync ()) -< ()
           returnA -< ((), Event ()))
         else returnA -< ((), NoEvent)

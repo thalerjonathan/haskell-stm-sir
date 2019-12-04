@@ -35,15 +35,6 @@ illnessDuration = 15.0
 rngSeed :: Int
 rngSeed = 42
 
--- NOTE ABOUT THIS IMPLEMENATION
---  atomicModifyIORef' is strictly speaking not a lock-based but conceptually
---  lock-free implementation (!!) based on IO instead of STM: it does not aquire
---  any lock but uses hardware features of the CPU to swap a pointer 
---  https://stackoverflow.com/questions/10102881/haskell-how-does-atomicmodifyioref-work.
---  A downside is that it only works in case there is only a single IORef in 
---  the program and that we are still running in IO - the performance however 
---  is even better than STM (!!!)
-
 main :: IO ()
 main = do
     let dt = 0.1
@@ -53,9 +44,9 @@ main = do
     cores <- getNumCapabilities
 
     Crit.defaultMain [
-        Crit.bgroup ("sir-io-atomic-cores:" ++ show cores)
-        [ Crit.bench "51x51"   $ Crit.nfIO (initSim g t dt ( 51,  51)) ]
-      , Crit.bgroup ("sir-io-atomic-agents:" ++ show cores)
+        Crit.bgroup ("sir-io-naive-cores:" ++ show cores)
+        [ Crit.bench "51x51" $ Crit.nfIO (initSim g t dt ( 51,  51)) ]
+      , Crit.bgroup ("sir-io-agents:" ++ show cores)
         [ Crit.bench "51x51"   $ Crit.nfIO (initSim g t dt ( 51,  51))
         , Crit.bench "101x101" $ Crit.nfIO (initSim g t dt (101, 101))
         , Crit.bench "151x151" $ Crit.nfIO (initSim g t dt (151, 151))
@@ -72,11 +63,14 @@ runSimulation :: RandomGen g
               -> Time 
               -> DTime 
               -> SIREnv
-              -> [(Disc2dCoord, SIRState)] 
+              -> [(Disc2dCoord, SIRState)]
               -> Dimension
               -> IO [SIREnv]
 runSimulation g0 t dt e as d = do
+    -- NOTE: initially I was thinking about using a TArray to reduce the transaction retries
+    -- but using a single environment seems to fast enough for now
     env <- newIORef e
+    envSync <- newMVar ()
 
     let n         = length as
         (rngs, _) = rngSplits g0 n []
@@ -84,7 +78,7 @@ runSimulation g0 t dt e as d = do
 
     vars <- zipWithM (\g' a -> do
       dtVar  <- newEmptyMVar 
-      retVar <- createAgentThread steps env dtVar g' a d
+      retVar <- createAgentThread steps env envSync dtVar g' a d
       return (dtVar, retVar)) rngs as
 
     let (dtVars, retVars) = unzip vars
@@ -116,13 +110,14 @@ runSimulation g0 t dt e as d = do
 createAgentThread :: RandomGen g 
                   => Int 
                   -> IORef SIREnv
+                  -> MVar ()
                   -> MVar DTime
                   -> g
                   -> (Disc2dCoord, SIRState)
                   -> Dimension
                   -> IO (MVar ())
-createAgentThread steps env dtVar rng0 a d = do
-    let sf = uncurry (sirAgent env d) a
+createAgentThread steps env envSync dtVar rng0 a d = do
+    let sf = uncurry (sirAgent env envSync d) a
     -- create the var where the result will be posted to
     retVar <- newEmptyMVar
     _ <- forkIO $ agentThread steps sf rng0 retVar
@@ -153,23 +148,25 @@ createAgentThread steps env dtVar rng0 a d = do
 
 sirAgent :: RandomGen g 
          => IORef SIREnv
+         -> MVar ()
          -> Dimension
          -> Disc2dCoord 
          -> SIRState 
          -> SIRAgent g
-sirAgent env d c Susceptible = susceptibleAgent env c d
-sirAgent env _ c Infected    = infectedAgent env c 
-sirAgent _   _ _ Recovered   = recoveredAgent
+sirAgent env envSync d c Susceptible = susceptibleAgent env envSync c d
+sirAgent env envSync _ c Infected    = infectedAgent env envSync c 
+sirAgent _   _       _ _ Recovered   = recoveredAgent
 
 susceptibleAgent :: RandomGen g 
-                 => IORef SIREnv
+                 => IORef SIREnv 
+                 -> MVar ()
                  -> Disc2dCoord
                  -> Dimension
                  -> SIRAgent g
-susceptibleAgent env coord d = 
+susceptibleAgent env envSync coord d = 
     switch 
       susceptible
-      (const $ infectedAgent env coord)
+      (const $ infectedAgent env envSync coord)
   where
     susceptible :: RandomGen g 
                 => SF (SIRMonad g) () ((), Event ())
@@ -179,11 +176,13 @@ susceptibleAgent env coord d =
       if not $ isEvent makeContact 
         then returnA -< ((), NoEvent)
         else (do
-          -- READ: also reading has to go through atomicModifyIORef when using
-          -- atomicModifyIORef for writing!
-          -- this environment can be read-only 
-          eReadOnly <- arrM (liftIO . atomicModifyIORef' env) -< (\e -> (e, e))
-          let ns = neighbours eReadOnly coord d moore
+          -- NAIVE APPROACH: hold lock much longer than needed (see sir-io for
+          -- better approach)
+          -- aquire lock
+          arrM_ (liftIO $ takeMVar envSync) -< ()
+          -- read (immutable) shared environment data
+          e <- arrM_ (liftIO $ readIORef env) -< ()
+          let ns = neighbours e coord d moore
           --let ns = allNeighbours e
           s <- drawRandomElemS -< ns
           case s of
@@ -191,20 +190,28 @@ susceptibleAgent env coord d =
               infected <- arrM_ (lift $ randomBool infectivity) -< ()
               if infected 
                 then (do
-                  -- WRITE through atomicModifyIORef
-                  -- DON'T use the eReadOnly environment because could have
-                  -- changed in the meantime by other threads! Therefore
-                  -- operate on environment passed into modification function!
-                  arrM (liftIO . atomicModifyIORef' env) -< (\e -> (changeCell coord Infected e, ()))
+                  -- update environment data
+                  let e' = changeCell coord Infected e
+                  -- write to shared environment 
+                  arrM (liftIO . writeIORef env) -< e'
+                  -- release lock
+                  arrM_ (liftIO $ putMVar envSync ()) -< ()
                   returnA -< ((), Event ()))
-                else returnA -< ((), NoEvent)
-            _       -> returnA -< ((), NoEvent))
+                else do
+                  -- release lock
+                  arrM_ (liftIO $ putMVar envSync ()) -< ()
+                  returnA -< ((), NoEvent)
+            _ -> do
+              -- release lock
+              arrM_ (liftIO $ putMVar envSync ()) -< ()
+              returnA -< ((), NoEvent))
 
 infectedAgent :: RandomGen g 
               => IORef SIREnv 
+              -> MVar ()
               -> Disc2dCoord
               -> SIRAgent g
-infectedAgent env coord = 
+infectedAgent env envSync coord = 
     switch
     infected 
       (const recoveredAgent)
@@ -214,8 +221,13 @@ infectedAgent env coord =
       recovered <- occasionally illnessDuration () -< ()
       if isEvent recovered
         then (do
-          -- WRITE through atomicModifyIORef
-          arrM (liftIO . atomicModifyIORef' env) -< (\e -> (changeCell coord Recovered e, ()))
+          -- we are updating unconditionally, therefore trivial 
+          -- aquire lock
+          arrM_ (liftIO $ takeMVar envSync) -< ()
+          -- modify shared environment
+          arrM_ (liftIO $ modifyIORef env (changeCell coord Recovered)) -< ()
+          -- release lock
+          arrM_ (liftIO $ putMVar envSync ()) -< ()
           returnA -< ((), Event ()))
         else returnA -< ((), NoEvent)
 
