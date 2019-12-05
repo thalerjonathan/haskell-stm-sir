@@ -26,17 +26,17 @@
 # sh run_agents.sh
 # cd ..
 
-cd sir-io-atomic/
-sh run_agents.sh
-cd ..
+# cd sir-tvar/
+# sh run_agents.sh
+# cd ..
 
-cd sir-io-rw/
-sh run_agents.sh
-cd ..
+# cd sir-io-rw/
+# sh run_agents.sh
+# cd ..
 
-cd sir-tvar/
-sh run_agents.sh
-cd ..
+# cd sir-io-atomic/
+# sh run_agents.sh
+# cd ..
 
 # cd sir-seq/
 # sh run_agents.sh
