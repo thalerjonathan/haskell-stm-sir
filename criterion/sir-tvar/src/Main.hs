@@ -6,7 +6,7 @@ import GHC.Generics (Generic)
 import Control.DeepSeq
 import Control.Concurrent
 import Control.Concurrent.STM
-import Control.Concurrent.STM.Stats
+--import Control.Concurrent.STM.Stats
 import Control.Monad.Random
 import Control.Monad.Reader
 import Control.Monad.Trans.MSF.Random
@@ -81,12 +81,12 @@ runSimulation g0 t dt e as d = do
 
     let (dtVars, retVars) = unzip vars
 
-    --forM [0..steps-1] (simulationStep env dtVars retVars)
+    forM [0..steps-1] (simulationStep env dtVars retVars)
 
     -- uncomment for STM stats
-    ret <- forM [0..steps-1] (simulationStep env dtVars retVars)
-    dumpSTMStats
-    return ret
+    -- ret <- forM [0..steps-1] (simulationStep env dtVars retVars)
+    -- dumpSTMStats
+    -- return ret
 
   where
     rngSplits :: RandomGen g => g -> Int -> [g] -> ([g], g)
@@ -126,9 +126,9 @@ createAgentThread steps env dtVar rng0 a d = do
     return retVar
   where
     -- uncomment for STM stats
-    stmConf = defaultTrackSTMConf {
-      globalTheshold = Nothing -- disable warnings, not useful for us
-    }
+    -- stmConf = defaultTrackSTMConf {
+    --   globalTheshold = Nothing -- disable warnings, not useful for us
+    -- }
 
     agentThread :: RandomGen g 
                 => Int
@@ -145,7 +145,7 @@ createAgentThread steps env dtVar rng0 a d = do
       let sfReader = unMSF sf ()
           sfRand   = runReaderT sfReader dt
           sfSTM    = runRandT sfRand rng
-      ((_, sf'), rng') <- trackSTMConf stmConf "SIR Agent" sfSTM -- atomically sfSTM -- trackSTMConf stmConf "SIR Agent" sfSTM
+      ((_, sf'), rng') <- atomically sfSTM -- atomically sfSTM -- trackSTMConf stmConf "SIR Agent" sfSTM
       -- NOTE: running STM with stats results in considerable lower performance the more STM actions are run concurrently
 
       -- post result to main thread
