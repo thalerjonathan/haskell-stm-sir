@@ -55,8 +55,7 @@ main = do
         Crit.bgroup "sir-seq-singlecore"
         [ Crit.bench "51x51"   $ Crit.nf (initSim g t dt) ( 51,  51) ]
       , Crit.bgroup "sir-seq-agents"
-        [ Crit.bench "51x51"   $ Crit.nf (initSim g t dt) ( 51,  51)
-        , Crit.bench "101x101" $ Crit.nf (initSim g t dt) (101, 101)
+        [ Crit.bench "101x101" $ Crit.nf (initSim g t dt) (101, 101)
         , Crit.bench "151x151" $ Crit.nf (initSim g t dt) (151, 151)
         , Crit.bench "201x201" $ Crit.nf (initSim g t dt) (201, 201)
         , Crit.bench "251x251" $ Crit.nf (initSim g t dt) (251, 251) ]
